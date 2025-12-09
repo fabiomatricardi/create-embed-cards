@@ -1,0 +1,216 @@
+<!-- templates/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Link Preview Generator</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #f9fafb;
+            color: #111;
+            padding: 2rem;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 1.5rem;
+            color: #2d3748;
+        }
+        .instructions {
+            background: #f0f9ff;
+            border-left: 4px solid #3b82f6;
+            padding: 1rem 1.25rem;
+            border-radius: 0 6px 6px 0;
+            margin-bottom: 1.5rem;
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+        .instructions h2 {
+            margin-top: 0;
+            color: #1e40af;
+            font-size: 1.1rem;
+        }
+        .instructions p {
+            margin: 0.75rem 0;
+        }
+        .instructions code {
+            background: #dbeafe;
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        .instructions pre {
+            background: #dbeafe;
+            padding: 1rem;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 0.75rem 0;
+        }
+        .instructions ul {
+            padding-left: 1.25rem;
+            margin: 0.5rem 0;
+        }
+        .instructions li {
+            margin-bottom: 0.25rem;
+        }
+        textarea {
+            width: 100%;
+            height: 100px;
+            padding: 0.75rem;
+            font-size: 1rem;
+            border: 1px solid #cbd5e0;
+            border-radius: 6px;
+            margin-bottom: 1rem;
+            resize: vertical;
+            font-family: monospace;
+        }
+        button {
+            background-color: #4f46e5;
+            color: white;
+            border: none;
+            padding: 0.5rem 1.25rem;
+            font-size: 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #4338ca;
+        }
+        .cards {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            margin-top: 2rem;
+        }
+        .card {
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            transition: transform 0.2s, box-shadow 0.2s;
+            text-decoration: none;
+            color: inherit;
+            display: block;
+        }
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(0,0,0,0.12);
+        }
+        .card-image {
+            width: 100%;
+            height: 160px;
+            object-fit: cover;
+            background-color: #edf2f7;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #a0aec0;
+            font-size: 0.875rem;
+        }
+        .card-image img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .card-content {
+            padding: 1rem;
+        }
+        .card-site {
+            font-size: 0.75rem;
+            color: #718096;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.25rem;
+        }
+        .card-title {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin: 0 0 0.5rem 0;
+            line-height: 1.4;
+            color: #2d3748;
+        }
+        .card-desc {
+            font-size: 0.95rem;
+            color: #4a5568;
+            line-height: 1.5;
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔗 Link Preview Generator</h1>
+    <div style="text-align: center; margin-top: 2rem; margin-bottom: 1rem;">
+        <button onclick="shutdownApp()" style="
+            background-color: #ef4444;
+            color: white;
+            border: none;
+            padding: 0.4rem 1rem;
+            font-size: 0.9rem;
+            border-radius: 6px;
+            cursor: pointer;
+        ">⏹️ Quit App</button>
+    </div>
+    <br>
+    <script>
+    function shutdownApp() {
+        if (confirm("Are you sure you want to quit the app?")) {
+            fetch('/shutdown', { method: 'POST' })
+                .then(() => {
+                    document.body.innerHTML = '<div style="text-align:center; margin-top:3rem; font-family:sans-serif; color:#4a5568;"><h2>App is shutting down...</h2><p>You can now close this window.</p></div>';
+                    setTimeout(() => window.close(), 1000);
+                })
+                .catch(err => {
+                    alert('Failed to shut down. Please close the terminal or kill the process manually.');
+                });
+        }
+    }
+    </script>    
+    <form method="POST">
+        <textarea name="urls" placeholder="Paste one or more URLs (one per line)">{{ input_text }}</textarea>
+        <button type="submit">Generate Previews</button>
+    </form>
+    <br>
+    {% if cards %}
+    <div class="cards">
+        {% for card in cards %}
+        <a href="{{ card.url }}" target="_blank" class="card">
+            {% if card.image %}
+                <div class="card-image"><img src="{{ card.image }}" alt="Preview image"></div>
+            {% else %}
+                <div class="card-image">No preview image</div>
+            {% endif %}
+            <div class="card-content">
+                {% if card.site_name %}
+                <div class="card-site">{{ card.site_name }}</div>
+                {% endif %}
+                <h2 class="card-title">{{ card.title }}</h2>
+                <p class="card-desc">{{ card.description or 'No description available.' }}</p>
+            </div>
+        </a><br>
+        {% endfor %}
+    <br><br>
+    </div>
+    {% endif %}
+
+        <div class="instructions">
+        <h2>📝 How to Use It</h2>
+        <p>In the text area below, paste one or more URLs — one per line.</p>
+        <p>For <strong>Medium links</strong>, you can add a custom image on the next line using <code>!image &lt;URL&gt;</code>:</p>
+        <pre>https://medium.com/artificial-corner/exploratory-document-analysis-is-this-a-thing-ed9f4809f364
+!image https://miro.medium.com/v2/resize:fit:640/format:webp/1*DB1Jq4zTpOoGulmj9kKfVQ.png
+
+https://thepoorgpuguy.substack.com/p/ai-frankenstein-is-alive-part-2?r=i78xo</pre>
+        <p><strong>How to get the Medium image URL:</strong></p>
+        <ol>
+            <li>Open the Medium article in your browser</li>
+            <li>Right-click the <strong>header image</strong> → <em>Copy image address</em></li>
+            <li>Paste it after <code>!image </code></li>
+        </ol>
+        <p>The app will use your image for Medium cards (faster and more reliable!). For non-Medium links, <code>!image</code> is ignored.</p>
+    </div>
+</body>
+</html>
