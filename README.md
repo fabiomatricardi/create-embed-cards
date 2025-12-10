@@ -2,6 +2,8 @@
 python flask app to create Embedd Cards from urls
 
 
+<img src='https://github.com/fabiomatricardi/create-embed-cards/raw/main/banner.png' width=500>   <img src='https://github.com/fabiomatricardi/create-embed-cards/raw/main/banner2.png' width=500>
+
 A Python web app that:
 
 1. Lets you input one or more URLs (e.g., Substack, Medium, or any Open Graph–enabled page).
@@ -15,6 +17,7 @@ A Python web app that:
 - **Backend**: Python + Flask (lightweight web framework)
 - **Frontend**: HTML + CSS (no JS required, but we’ll keep it clean and responsive)
 - **Metadata fetching**: Requests + BeautifulSoup (to parse OG tags)
+
 
 ---
 
