@@ -35,84 +35,87 @@ pip install flask requests beautifulsoup4 pyinstaller
 
 ```python
 # app.py
+import os
+import re
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
-import os
-import signal
-from flask import Flask, render_template, request, jsonify
-import re
-# for pyinstaller
-import webbrowser
+from flask import Flask, render_template, request
 import threading
 import time
+import webbrowser
 
 app = Flask(__name__)
 
-# for pyinstaller
-def open_browser():
-    time.sleep(1)  # Wait for server to start
-    webbrowser.open("http://127.0.0.1:5000")
+def extract_meta(url, custom_title=None, custom_desc=None, custom_image=None):
+    """Fetch metadata only if needed; always respect manual overrides."""
+    # Always use manual values if provided
+    final_title = custom_title or url
+    final_desc = custom_desc or ''
+    final_image = custom_image
+    final_site_name = urlparse(url).netloc
 
-def is_medium_url(url):
-    return urlparse(url).netloc.endswith('medium.com')
+    # Should we fetch the page? Only if at least one field is missing.
+    should_fetch = not (custom_title and custom_desc and custom_image)
 
-def extract_meta(url, custom_image=None):
-    """Fetch metadata; use custom_image if provided and URL is Medium."""
-    fallback = {
+    if should_fetch:
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache',
+            }
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.content, 'html.parser')
+
+            def get_meta(*names):
+                for name in names:
+                    tag = soup.find('meta', property=name) or soup.find('meta', attrs={'name': name})
+                    if tag and tag.get('content'):
+                        return tag['content']
+                return ''
+
+            # Title: use custom or fetch
+            if not custom_title:
+                og_title = get_meta('og:title', 'twitter:title', 'title')
+                final_title = og_title or (soup.title.string if soup.title else url)
+
+            # Description: use custom or fetch
+            if not custom_desc:
+                final_desc = get_meta('og:description', 'twitter:description', 'description') or ''
+
+            # Image: use custom or fetch
+            if not custom_image:
+                image = get_meta('og:image', 'twitter:image')
+                if image and not image.startswith(('http://', 'https://')):
+                    image = urljoin(url, image)
+                final_image = image
+
+            # Site name (only from fetch)
+            site_name = get_meta('og:site_name', 'twitter:site')
+            final_site_name = site_name.strip() if site_name else urlparse(url).netloc
+
+        except Exception as e:
+            print(f"Error fetching {url}: {e}")
+            if not custom_desc:
+                final_desc = 'Preview unavailable.'
+            if custom_title or custom_desc or custom_image:
+                final_desc = 'Partially manually added preview.'
+
+    else:
+        # Fully manual — no network call
+        final_desc = final_desc or 'Manually added preview.'
+
+    return {
         'url': url,
-        'title': url,
-        'description': '',
-        'image': custom_image or '',
-        'site_name': urlparse(url).netloc
+        'title': str(final_title).strip(),
+        'description': str(final_desc).strip(),
+        'image': final_image or '',
+        'site_name': final_site_name
     }
-
-    # If it's Medium and we have a custom image, skip fetching
-    if is_medium_url(url) and custom_image:
-        return {**fallback, 'description': 'Manually added preview.'}
-
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache',
-        }
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, 'html.parser')
-
-        def get_meta(*names):
-            for name in names:
-                tag = soup.find('meta', property=name) or soup.find('meta', attrs={'name': name})
-                if tag and tag.get('content'):
-                    return tag['content']
-            return ''
-
-        title = get_meta('og:title', 'twitter:title', 'title') or (soup.title.string if soup.title else '')
-        description = get_meta('og:description', 'twitter:description', 'description')
-        image = get_meta('og:image', 'twitter:image')
-        site_name = get_meta('og:site_name', 'twitter:site')
-
-        if image and not image.startswith(('http://', 'https://')):
-            image = urljoin(url, image)
-
-        result = {
-            'url': url,
-            'title': title.strip() if title else url,
-            'description': description.strip() if description else '',
-            'image': image or custom_image or '',
-            'site_name': site_name.strip() if site_name else urlparse(url).netloc
-        }
-        return result
-
-    except Exception as e:
-        print(f"Error fetching {url}: {e}")
-        fallback['description'] = 'Preview unavailable.'
-        if is_medium_url(url) and custom_image:
-            fallback['description'] = 'Manually added preview.'
-        return fallback
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -121,35 +124,54 @@ def index():
     if request.method == 'POST':
         raw_input = request.form.get('urls', '').strip()
         input_text = raw_input
-        lines = [line.strip() for line in raw_input.splitlines() if line.strip()]
+        lines = [line.strip() for line in raw_input.splitlines()]
         
-        urls_with_images = []
+        urls_with_meta = []
         i = 0
         while i < len(lines):
-            url_line = lines[i]
-            if re.match(r'https?://', url_line):
-                url = url_line
+            line = lines[i]
+            if re.match(r'https?://', line):
+                url = line
+                custom_title = None
+                custom_desc = None
                 custom_image = None
-                # Check next line for !image
-                if i + 1 < len(lines) and lines[i + 1].startswith('!image '):
-                    custom_image = lines[i + 1].replace('!image ', '').strip()
-                    i += 2  # skip image line
-                else:
-                    i += 1
-                urls_with_images.append((url, custom_image))
+
+                # Parse subsequent directive lines (!title, !desc, !image)
+                j = i + 1
+                while j < len(lines) and lines[j].startswith('!'):
+                    directive = lines[j]
+                    if directive.startswith('!title '):
+                        custom_title = directive[len('!title '):].strip()
+                    elif directive.startswith('!desc '):
+                        custom_desc = directive[len('!desc '):].strip()
+                    elif directive.startswith('!image '):
+                        custom_image = directive[len('!image '):].strip()
+                    else:
+                        break  # unknown directive — stop parsing
+                    j += 1
+
+                urls_with_meta.append((url, custom_title, custom_desc, custom_image))
+                i = j  # skip processed lines
             else:
                 i += 1  # skip non-URL lines
 
-        cards = [extract_meta(url, img) for url, img in urls_with_images]
+        cards = [
+            extract_meta(url, title, desc, img)
+            for url, title, desc, img in urls_with_meta
+        ]
     return render_template('index.html', input_text=input_text, cards=cards)
 
 @app.route('/shutdown', methods=['POST'])
 def shutdown():
-    """Force-kill the current process (works in PyInstaller)."""
-    os._exit(0)  # Immediate exit, no cleanup needed for local apps
+    """Terminate the application process immediately."""
+    os._exit(0)
+
+# Auto-open browser on startup
+def open_browser():
+    time.sleep(1.2)
+    webbrowser.open("http://127.0.0.1:5000")
 
 if __name__ == '__main__':
-    # Only open browser if not in reloader (avoid double launch in debug)
     if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
         threading.Thread(target=open_browser, daemon=True).start()
     app.run(host="127.0.0.1", port=5000, debug=False)
@@ -318,6 +340,7 @@ Create a folder called `templates` and inside it, create `index.html`:
             cursor: pointer;
         ">⏹️ Quit App</button>
     </div>
+    <br>
     <script>
     function shutdownApp() {
         if (confirm("Are you sure you want to quit the app?")) {
@@ -336,7 +359,7 @@ Create a folder called `templates` and inside it, create `index.html`:
         <textarea name="urls" placeholder="Paste one or more URLs (one per line)">{{ input_text }}</textarea>
         <button type="submit">Generate Previews</button>
     </form>
-
+    <br>
     {% if cards %}
     <div class="cards">
         {% for card in cards %}
@@ -363,10 +386,13 @@ Create a folder called `templates` and inside it, create `index.html`:
         <h2>📝 How to Use It</h2>
         <p>In the text area below, paste one or more URLs — one per line.</p>
         <p>For <strong>Medium links</strong>, you can add a custom image on the next line using <code>!image &lt;URL&gt;</code>:</p>
+        <p>For <strong>Medium articles</strong>, you can add a custom title and description on the next line using <code>!title Your own title</code> and for description <code>!desc your own description</code>:</p>
         <pre>https://medium.com/artificial-corner/exploratory-document-analysis-is-this-a-thing-ed9f4809f364
-!image https://miro.medium.com/v2/resize:fit:1400/1*KsR2U0Z3vK1YxVvVXZ7Q9g.jpeg
+!image https://miro.medium.com/v2/resize:fit:640/format:webp/1*DB1Jq4zTpOoGulmj9kKfVQ.png
+!title Exploratory document analysis is this a thing? 
+!desc The only important thing is to take care of your data 
 
-https://example.com/other-article</pre>
+https://thepoorgpuguy.substack.com/p/ai-frankenstein-is-alive-part-2?r=i78xo</pre>
         <p><strong>How to get the Medium image URL:</strong></p>
         <ol>
             <li>Open the Medium article in your browser</li>
@@ -394,81 +420,54 @@ Then open your browser to:
 
 ---
 
-### 🔄 Simpler & Clean Approach: **Per-URL Image Override via Comments**
 
-Instead of complex dynamic UI, we’ll use a **simple convention** in the text area:
+### 📝 How to Use Manual Overrides
 
-> Paste links like this:
-> ```
-> https://medium.com/.../my-article
-> !image https://miro.medium.com/v2/.../123.jpg
-> 
-> https://other-site.com/blog
-> ```
+In the text area, paste:
 
-- Any line starting with `!image ` **immediately after a URL** will be treated as its **custom image**
-- Only applies if the **previous line was a URL**
-- Works only for Medium? We can **auto-detect** and **only enable this logic for Medium links**
+```text
+https://example.com/poor-metadata
+!title My Custom Title
+!desc This is a much better description than the auto-fetched one.
+!image https://example.com/great-image.jpg
 
-This keeps the UI minimal (no JS, no dynamic rows) and works great in your current Flask form.
-
-> 🔍 **How to get the Medium image URL**:
-> 1. Open the Medium article in your browser
-> 2. Right-click the **header image** → *Copy image address*
-> 3. Paste it after `!image `
-
-The app will:
-- Skip fetching for that Medium link (faster!)
-- Use your image
-- Show a clean card
-
-For non-Medium links, `!image` is ignored (but you can extend it later if needed).
-
----
-
-
----
-
-# How to turn Link Preview Generator into a standalone desktop app
-
-To turn your **Link Preview Generator** (with support for custom Medium images) into a **standalone desktop app** that users can run **without installing Python or dependencies**...
-
-Here’s a practical, step-by-step plan using **PyInstaller** + **Flask** (which you already have), resulting in a **double-clickable `.exe` (Windows) or `.app` (macOS)** that starts a local server and opens the browser automatically.
-
----
-
-## ✅ Goal
-- One executable file
-- Launches your Flask app **locally on `127.0.0.1:5000`**
-- Automatically opens the browser
-- Works **offline after first run** (no internet needed unless previewing links)
-
----
-
-## 🛠️ Step 1: Finalize Your App Code
-
-Make sure your `app.py` includes:
-- The **auto-open browser** logic
-- **Host binding to `127.0.0.1`** (not just default)
-- **Disable debug mode**
-
-
-## 📦 Step 2: Freeze with PyInstaller
-
-### Install PyInstaller:
-```bash
-pip install pyinstaller
+https://medium.com/pub/member-story
+!title Behind the Paywall: Key Insights
+!desc Summary of the article even though it's paywalled.
+!image https://miro.medium.com/v2/resize:fit:1400/abc123.jpeg
 ```
 
-### Build the standalone app:
+> 🔹 Directives must be **on separate lines**, **immediately after the URL**  
+> 🔹 Order doesn’t matter (`!image` before `!desc` is fine)  
+> 🔹 You can use **any combination** (just title, just image, all three, etc.)
+
+---
+
+### 🔧 Update Your `index.html` Instructions (Optional but Recommended)
+
+Add this to your instructions box in `templates/index.html`:
+
+> You can also customize the **description** using `!desc Your description...`:
+> ```text
+> https://example.com/article
+> !title Custom Title
+> !desc A clear, concise summary.
+> !image https://example.com/image.jpg
+> ```
+
+---
+
+### ▶️ Build Standalone App
+
 ```bash
+pip install flask requests beautifulsoup4
 pyinstaller --onefile --windowed --add-data "templates;templates" app.py
 ```
 
-> 📝 On **macOS/Linux**, use `:` instead of `;`:
-> ```bash
-> pyinstaller --onefile --windowed --add-data "templates:templates" app.py
-> ```
+The resulting `dist/app.exe` will:
+- Launch in browser automatically  
+- Let you create perfect cards with full control  
+- Shut down cleanly with the **Quit App** button  
 
 ### Flags explained:
 - `--onefile`: Single executable (slower startup, but cleaner)
